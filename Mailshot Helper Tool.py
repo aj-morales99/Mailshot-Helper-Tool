@@ -480,60 +480,47 @@ def _get_logo_image(size=(32,32)):
 
 def _set_window_icon(window):
     """
-    Set taskbar/dock icon — gold arches on charcoal background.
-    On macOS: wm_iconphoto sets the title-bar icon.
-    For the dock icon when running from source, we also write a temp .icns.
-    When built with build_app.sh the .icns is bundled properly.
+    Set window/taskbar/dock icon to the Cornerstone arch logo.
+    Called via after(50,...) so it runs AFTER CTk finishes its own icon setup.
+    On Windows: clears CTk's blue default bitmap, then sets our icon.
+    On macOS: sets title-bar icon + dock icon via NSApp if pyobjc available.
     """
     try:
         from PIL import Image as _PImage, ImageTk as _ITk
+
         if os.path.exists(_LOGO_PATH):
             icon_img = _PImage.open(_LOGO_PATH).convert("RGBA")
         else:
             raw = base64.b64decode(_EMBEDDED_LOGO_B64)
             icon_img = _PImage.open(io.BytesIO(raw)).convert("RGBA")
 
-        # Compose on charcoal bg
         SIZE = 256
         bg = _PImage.new("RGBA", (SIZE, SIZE), (42, 42, 42, 255))
-        resized = icon_img.resize((SIZE, SIZE), _PImage.LANCZOS)
-        bg.paste(resized, (0, 0), resized)
+        bg.paste(icon_img.resize((SIZE, SIZE), _PImage.LANCZOS), (0, 0), icon_img.resize((SIZE, SIZE), _PImage.LANCZOS))
 
-        # wm_iconphoto — works on Windows/Linux, partial on macOS
-        tk_icon = _ITk.PhotoImage(bg.convert("RGB"))
-        window.wm_iconphoto(True, tk_icon)
-        window._icon_ref = tk_icon  # prevent GC
-
-        # macOS dock icon via temp .icns (when running from source)
-        if _platform.system() == "Darwin":
-            import tempfile, subprocess
-            tmp_png = os.path.join(tempfile.gettempdir(), "cs_icon.png")
-            bg.save(tmp_png)
-            iconset = tmp_png.replace(".png", ".iconset")
-            icns    = tmp_png.replace(".png", ".icns")
-            os.makedirs(iconset, exist_ok=True)
-            for sz in [16, 32, 64, 128, 256, 512]:
-                sized = bg.resize((sz, sz), _PImage.LANCZOS)
-                sized.save(os.path.join(iconset, f"icon_{sz}x{sz}.png"))
-                sized2 = bg.resize((sz*2, sz*2), _PImage.LANCZOS)
-                sized2.save(os.path.join(iconset, f"icon_{sz}x{sz}@2x.png"))
-            r = subprocess.run(["iconutil", "-c", "icns", iconset, "-o", icns],
-                               capture_output=True)
-            if r.returncode == 0 and os.path.exists(icns):
-                subprocess.Popen(
-                    ["python3", "-c",
-                     f"import subprocess; subprocess.run(['osascript','-e',"
-                     f"'tell application \'Finder\' to set icon of file "
-                     f"(POSIX file \'{icns}\') to 1'])"],
-                    stderr=subprocess.DEVNULL)
-            # Simpler: use NSApp setApplicationIconImage via objc if available
+        # Windows: CTk sets a blue .ico via wm_iconbitmap — clear it first
+        if IS_WINDOWS:
             try:
-                import objc
-                from AppKit import NSApplication, NSImage
-                ns_img = NSImage.alloc().initWithContentsOfFile_(tmp_png)
-                NSApplication.sharedApplication().setApplicationIconImage_(ns_img)
+                window.wm_iconbitmap("")
             except Exception:
                 pass
+
+        tk_icon = _ITk.PhotoImage(bg.convert("RGB"))
+        window.wm_iconphoto(True, tk_icon)
+        window._icon_ref = tk_icon   # prevent GC
+
+        # macOS dock icon via NSApp (requires: pip install pyobjc-framework-Cocoa)
+        if IS_MAC:
+            try:
+                import tempfile as _tf
+                tmp = _tf.NamedTemporaryFile(suffix=".png", delete=False)
+                bg.save(tmp.name); tmp.close()
+                from AppKit import NSApplication as _NSApp, NSImage as _NSImg
+                ns_img = _NSImg.alloc().initWithContentsOfFile_(tmp.name)
+                _NSApp.sharedApplication().setApplicationIconImage_(ns_img)
+            except Exception:
+                pass
+
     except Exception:
         pass
 INSTANTLY_BASE     = "https://api.instantly.ai/api/v2"
@@ -2578,20 +2565,22 @@ class App(ctk.CTk):
         self.title("Cornerstone — Mailshot Filter")
         self.geometry("1300x860")
         self.minsize(1100, 700)
-        _set_window_icon(self)
-        self.minsize(1100, 700)
         self.configure(bg=BG)
 
-        self.api          = BullhornAPI()
+        self.api           = BullhornAPI()
         FilterRow._api_ref = self.api
-        self.instantly    = InstantlyAPI()
-        self._connected   = False
-        self.all_contacts = []
-        self.contact_vars = {}   # cid → {"remove": bool, "data": dict}
-        self.filter_rows  = []
+        self.instantly     = InstantlyAPI()
+        self._connected    = False
+        self.all_contacts  = []
+        self.contact_vars  = {}
+        self.filter_rows   = []
 
         self._apply_styles()
         self._build_ui()
+
+        # Set icon AFTER CTk finishes its own init (CTk overwrites wm_iconphoto in __init__)
+        # Delay slightly so CTk's internal icon setup has completed
+        self.after(50, lambda: _set_window_icon(self))
         self.after(200, self._auto_login)
 
     def _apply_styles(self):
