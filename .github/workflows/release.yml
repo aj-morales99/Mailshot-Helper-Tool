@@ -6,7 +6,7 @@ on:
       - 'v*.*.*'
 
 permissions:
-  contents: write   # required to create releases and upload assets
+  contents: write
 
 jobs:
   build-macos:
@@ -14,11 +14,37 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
       - name: Install dependencies
         run: pip install customtkinter requests pillow pyinstaller
+
+      - name: Inject credentials into config.json
+        env:
+          BULLHORN_CLIENT_ID:     ${{ secrets.BULLHORN_CLIENT_ID }}
+          BULLHORN_CLIENT_SECRET: ${{ secrets.BULLHORN_CLIENT_SECRET }}
+          BULLHORN_USERNAME:      ${{ secrets.BULLHORN_USERNAME }}
+          BULLHORN_PASSWORD:      ${{ secrets.BULLHORN_PASSWORD }}
+          INSTANTLY_API_KEY:      ${{ secrets.INSTANTLY_API_KEY }}
+        run: |
+          python3 -c "
+          import json, os
+          cfg = {
+            'bullhorn_client_id':     os.environ['BULLHORN_CLIENT_ID'],
+            'bullhorn_client_secret': os.environ['BULLHORN_CLIENT_SECRET'],
+            'bullhorn_username':      os.environ['BULLHORN_USERNAME'],
+            'bullhorn_password':      os.environ['BULLHORN_PASSWORD'],
+            'bullhorn_redirect_uri':  'https://welcome.bullhornstaffing.com',
+            'instantly_api_key':      os.environ['INSTANTLY_API_KEY'],
+          }
+          with open('config.json', 'w') as f:
+              json.dump(cfg, f, indent=2)
+          print('config.json written with credentials')
+          "
+
       - name: Convert logo to .icns
         run: |
           mkdir -p logo.iconset
@@ -27,6 +53,7 @@ jobs:
             sips -z $((sz*2)) $((sz*2)) logo.png --out logo.iconset/icon_${sz}x${sz}@2x.png
           done
           iconutil -c icns logo.iconset -o logo.icns
+
       - name: Build .app
         run: |
           pyinstaller \
@@ -38,8 +65,10 @@ jobs:
             --hidden-import customtkinter \
             --collect-all customtkinter \
             "Mailshot Helper Tool.py"
+
       - name: Zip
         run: cd dist && zip -r "Mailshot-Helper-Tool-macOS.zip" "Mailshot Helper Tool.app"
+
       - uses: actions/upload-artifact@v4
         with:
           name: macos-build
@@ -50,11 +79,37 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
       - name: Install dependencies
         run: pip install customtkinter requests pillow pyinstaller
+
+      - name: Inject credentials into config.json
+        env:
+          BULLHORN_CLIENT_ID:     ${{ secrets.BULLHORN_CLIENT_ID }}
+          BULLHORN_CLIENT_SECRET: ${{ secrets.BULLHORN_CLIENT_SECRET }}
+          BULLHORN_USERNAME:      ${{ secrets.BULLHORN_USERNAME }}
+          BULLHORN_PASSWORD:      ${{ secrets.BULLHORN_PASSWORD }}
+          INSTANTLY_API_KEY:      ${{ secrets.INSTANTLY_API_KEY }}
+        run: |
+          python -c "
+          import json, os
+          cfg = {
+            'bullhorn_client_id':     os.environ['BULLHORN_CLIENT_ID'],
+            'bullhorn_client_secret': os.environ['BULLHORN_CLIENT_SECRET'],
+            'bullhorn_username':      os.environ['BULLHORN_USERNAME'],
+            'bullhorn_password':      os.environ['BULLHORN_PASSWORD'],
+            'bullhorn_redirect_uri':  'https://welcome.bullhornstaffing.com',
+            'instantly_api_key':      os.environ['INSTANTLY_API_KEY'],
+          }
+          with open('config.json', 'w') as f:
+              json.dump(cfg, f, indent=2)
+          print('config.json written with credentials')
+          "
+
       - name: Convert logo to .ico
         run: |
           python -c "
@@ -64,6 +119,7 @@ jobs:
           bg.paste(img,(0,0),img)
           bg.save('logo.ico',format='ICO',sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])
           "
+
       - name: Build .exe
         run: |
           pyinstaller `
@@ -75,10 +131,13 @@ jobs:
             --hidden-import customtkinter `
             --collect-all customtkinter `
             "Mailshot Helper Tool.py"
-      - name: Copy config
+
+      - name: Copy config next to exe
         run: Copy-Item config.json "dist\Mailshot Helper Tool\config.json"
+
       - name: Zip
         run: Compress-Archive -Path "dist\Mailshot Helper Tool" -DestinationPath "dist\Mailshot-Helper-Tool-Windows.zip"
+
       - uses: actions/upload-artifact@v4
         with:
           name: windows-build
@@ -116,7 +175,8 @@ jobs:
             | **macOS** | `Mailshot-Helper-Tool-macOS.zip` — unzip and double-click the .app |
             | **Windows** | `Mailshot-Helper-Tool-Windows.zip` — unzip and run the .exe inside |
 
-            > Edit `config.json` in the same folder to set your API keys.
+            > **macOS:** If blocked by Gatekeeper, right-click → Open → Open
+            > **Windows:** If SmartScreen appears, click More info → Run anyway
           files: |
             release-files/Mailshot-Helper-Tool-macOS.zip
             release-files/Mailshot-Helper-Tool-Windows.zip
