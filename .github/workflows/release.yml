@@ -1,0 +1,117 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build-macos:
+    name: Build macOS .app
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install customtkinter requests pillow pyinstaller
+      - name: Convert logo to .icns
+        run: |
+          mkdir -p logo.iconset
+          for sz in 16 32 64 128 256 512; do
+            sips -z $sz $sz logo.png --out logo.iconset/icon_${sz}x${sz}.png
+            sips -z $((sz*2)) $((sz*2)) logo.png --out logo.iconset/icon_${sz}x${sz}@2x.png
+          done
+          iconutil -c icns logo.iconset -o logo.icns
+      - name: Build .app
+        run: |
+          pyinstaller \
+            --noconfirm --windowed \
+            --name "Mailshot Helper Tool" \
+            --icon logo.icns \
+            --add-data "config.json:." \
+            --add-data "logo.png:." \
+            --hidden-import customtkinter \
+            --collect-all customtkinter \
+            "Mailshot Helper Tool.py"
+      - name: Zip
+        run: cd dist && zip -r "Mailshot-Helper-Tool-macOS.zip" "Mailshot Helper Tool.app"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-build
+          path: dist/Mailshot-Helper-Tool-macOS.zip
+
+  build-windows:
+    name: Build Windows .exe
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install customtkinter requests pillow pyinstaller
+      - name: Convert logo to .ico
+        run: |
+          python -c "
+          from PIL import Image
+          img = Image.open('logo.png').convert('RGBA')
+          bg = Image.new('RGBA',(256,256),(42,42,42,255))
+          bg.paste(img,(0,0),img)
+          bg.save('logo.ico',format='ICO',sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])
+          "
+      - name: Build .exe
+        run: |
+          pyinstaller `
+            --noconfirm --windowed --onedir --noupx --clean `
+            --name "Mailshot Helper Tool" `
+            --icon logo.ico `
+            --add-data "config.json;." `
+            --add-data "logo.png;." `
+            --hidden-import customtkinter `
+            --collect-all customtkinter `
+            "Mailshot Helper Tool.py"
+      - name: Copy config
+        run: Copy-Item config.json "dist\Mailshot Helper Tool\config.json"
+      - name: Zip
+        run: Compress-Archive -Path "dist\Mailshot Helper Tool" -DestinationPath "dist\Mailshot-Helper-Tool-Windows.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: dist/Mailshot-Helper-Tool-Windows.zip
+
+  release:
+    name: Create Release
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-build
+          path: release-files
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-build
+          path: release-files
+      - name: Get version
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.VERSION }}
+          name: "Mailshot Helper Tool ${{ steps.version.outputs.VERSION }}"
+          body: |
+            ## Mailshot Helper Tool ${{ steps.version.outputs.VERSION }}
+
+            ### Downloads
+            | Platform | File |
+            |---|---|
+            | **macOS** | `Mailshot-Helper-Tool-macOS.zip` — unzip and double-click the .app |
+            | **Windows** | `Mailshot-Helper-Tool-Windows.zip` — unzip and run the .exe inside |
+
+            > Edit `config.json` in the same folder to set your API keys.
+          files: |
+            release-files/Mailshot-Helper-Tool-macOS.zip
+            release-files/Mailshot-Helper-Tool-Windows.zip
