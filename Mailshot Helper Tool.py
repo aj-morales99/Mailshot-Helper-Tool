@@ -25,21 +25,40 @@ import platform as _platform
 IS_WINDOWS = _platform.system() == "Windows"
 IS_MAC     = _platform.system() == "Darwin"
 
+def _screen_center(W, H):
+    """Calculate top-left corner to center a WxH window on screen."""
+    import tkinter as _tk
+    r = _tk.Tk()
+    r.withdraw()
+    sw = r.winfo_screenwidth()
+    sh = r.winfo_screenheight()
+    r.destroy()
+    return (sw - W) // 2, (sh - H) // 2
+
 def _popup_show(window, W, H, cx, cy, offset=26):
     """
-    Show a popup.
-    macOS: fade-in + slide-up animation.
-    Windows: instant show centered (no flicker).
+    Show a popup window centered with no flash-in-wrong-position.
+    Uses withdraw() before positioning so the window is NEVER seen
+    at the wrong location.
+    macOS: fade-in + slide-up after positioning.
+    Windows: instant appear at correct position.
     """
-    window.geometry(f"{W}x{H}+{cx}+{cy}")
+    # Hide immediately — before ANY geometry call
+    window.withdraw()
+    window.update_idletasks()
+
     if IS_WINDOWS:
-        window.attributes("-alpha", 1.0)
+        window.geometry(f"{W}x{H}+{cx}+{cy}")
+        window.deiconify()
         window.lift()
         window.focus_force()
         return
-    # macOS smooth animation
-    window.geometry(f"{W}x{H}+{cx}+{cy + offset}")
+
+    # macOS: start invisible and below final position
     window.attributes("-alpha", 0.0)
+    window.geometry(f"{W}x{H}+{cx}+{cy + offset}")
+    window.deiconify()
+
     def _animate(step=0):
         steps = 16
         ease  = 1 - (1 - step / steps) ** 3
@@ -1119,6 +1138,7 @@ class ChipFrame(tk.Frame):
 class MultiSelectPopup(tk.Toplevel):
     def __init__(self, parent, title, options, selected=None):
         super().__init__(parent)
+        self.withdraw()          # hide immediately — no flash at wrong position
         self.title(title)
         self.configure(bg=PANEL)
         self.resizable(True, True)
@@ -1128,9 +1148,9 @@ class MultiSelectPopup(tk.Toplevel):
         self._selected = set(self.result)
 
         w, h = 460, 520
-        self.update_idletasks()
-        sx, sy = self.winfo_screenwidth(), self.winfo_screenheight()
-        cx, cy = (sx - w) // 2, (sy - h) // 2
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        cx, cy = (sw - w) // 2, (sh - h) // 2
         self.minsize(360, 380)
         self.columnconfigure(0, weight=1)
         self.rowconfigure(2, weight=1)
@@ -1711,8 +1731,8 @@ class FilterRow(tk.Frame):
     def _open_floating_list(self, anchor_widget, items, on_pick, width_ref=None):
         """
         Draw a dropdown list anchored below anchor_widget.
-        Uses a tk.Frame placed via place() inside the root window — avoids all
-        Toplevel/overrideredirect focus-stealing issues on macOS / Python 3.14.
+        Frame is built invisible (place off-screen), content added,
+        then moved to correct position — prevents any flash at 0,0.
         """
         self._close_dropdown()
         if not items:
@@ -1730,30 +1750,14 @@ class FilterRow(tk.Frame):
         # Clamp so it doesn't go off-screen
         root_h = root.winfo_height()
         if ay + h > root_h - 10:
-            # Show above instead
             ay = (anchor_widget.winfo_rooty() - root.winfo_rooty()) - h - 2
 
+        # Build frame off-screen first so it never flashes at (0,0)
         outer = tk.Frame(root, bg=CARD,
                          highlightbackground=ACCENT, highlightthickness=1)
-        outer.place(x=ax, y=ay, width=w, height=h)
-        outer.lift()
+        outer.place(x=-9999, y=-9999, width=w, height=h)   # off-screen
         outer.rowconfigure(0, weight=1)
         outer.columnconfigure(0, weight=1)
-
-        # Slide-down animation — macOS only (Windows flickers with geometry changes)
-        if IS_MAC:
-            outer.place(x=ax, y=ay - 8, width=w, height=h)
-            def _slide(step=0):
-                steps = 8
-                ease  = 1 - (1 - step / steps) ** 2
-                y_cur = int(ay - 8 * (1 - ease))
-                try:
-                    outer.place(x=ax, y=y_cur, width=w, height=h)
-                except Exception:
-                    pass
-                if step < steps:
-                    outer.after(10, lambda: _slide(step + 1))
-            outer.after(0, _slide)
 
         lb = tk.Listbox(outer, bg=CARD, fg=TEXT,
                         selectbackground=SEL_BG, selectforeground=CHIP_FG,
@@ -1767,8 +1771,29 @@ class FilterRow(tk.Frame):
         for item in items:
             lb.insert("end", f"  {item}")
 
+        # NOW move to correct position and lift
+        if IS_MAC:
+            # Slide down from 8px above
+            outer.place(x=ax, y=ay - 8, width=w, height=h)
+            outer.lift()
+            def _slide(step=0):
+                steps = 8
+                ease  = 1 - (1 - step / steps) ** 2
+                y_cur = int(ay - 8 * (1 - ease))
+                try:
+                    outer.place(x=ax, y=y_cur, width=w, height=h)
+                except Exception:
+                    pass
+                if step < steps:
+                    outer.after(10, lambda: _slide(step + 1))
+            outer.after(0, _slide)
+        else:
+            # Windows/Linux: just place at correct position instantly
+            outer.place(x=ax, y=ay, width=w, height=h)
+            outer.lift()
+
         # Store so _close_dropdown can destroy it
-        self._dropdown_win = outer   # reuse same slot (Frame, not Toplevel)
+        self._dropdown_win = outer
         self._dropdown_lb  = lb
 
         def _pick(e=None):
@@ -2081,6 +2106,7 @@ class InstantlyCampaignPopup(tk.Toplevel):
 
     def __init__(self, parent, api, leads):
         super().__init__(parent)
+        self.withdraw()          # hide immediately — no flash at wrong position
         self.title("Push to Instantly")
         self.configure(bg=PANEL)
         self.grab_set()
@@ -2091,16 +2117,12 @@ class InstantlyCampaignPopup(tk.Toplevel):
         self._sel_senders = []
         self._build()
         self._load_accounts()
-        self.update_idletasks()
 
-        # ── Position: center on screen ────────────────────────────────
         W, H = 540, 700
-        sw = self.winfo_screenwidth()
-        sh = self.winfo_screenheight()
-        cx = (sw - W) // 2
-        cy = (sh - H) // 2
-        # Start 30px below final position for slide-up effect
-        self.lift()
+        sw   = self.winfo_screenwidth()
+        sh   = self.winfo_screenheight()
+        cx   = (sw - W) // 2
+        cy   = (sh - H) // 2
         _popup_show(self, W, H, cx, cy, offset=30)
 
     def _build(self):
@@ -3129,15 +3151,16 @@ class App(ctk.CTk):
 
         # ── Dialog ─────────────────────────────────────────────────────
         dlg = tk.Toplevel(self)
+        dlg.withdraw()           # hide immediately — no flash at wrong position
         dlg.title("Save to Tearsheet / Hotlist")
         dlg.configure(bg=PANEL)
         dlg.resizable(False, False)
         dlg.grab_set()
 
         W, H = 500, 360
-        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        sw   = dlg.winfo_screenwidth()
+        sh   = dlg.winfo_screenheight()
         cx, cy = (sw - W) // 2, (sh - H) // 2
-        dlg.lift()
         _popup_show(dlg, W, H, cx, cy, offset=24)
 
         def _close_all():
