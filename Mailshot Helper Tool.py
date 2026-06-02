@@ -1082,54 +1082,71 @@ class ClickLabel(tk.Label):
 #  CHIP FRAME
 # ═══════════════════════════════════════════════════════════════════════════
 class ChipFrame(tk.Frame):
+    """
+    Displays a list of removable chips.
+    Uses a stable widget pool — chips are reused not destroyed/recreated,
+    so there's no flicker on add/remove.
+    """
     def __init__(self, parent, on_change=None, **kwargs):
-        super().__init__(parent, bg=ENTRY_BG, **kwargs)
+        super().__init__(parent, bg=CARD, **kwargs)
         self._on_change = on_change
-        self._chips = []
+        self._chips     = []        # ordered list of chip names
+        self._widgets   = {}        # name → (frame, label, x_label)
 
     def add(self, name):
         name = str(name).strip()
         if not name or name in self._chips:
             return
         self._chips.append(name)
-        self._redraw()
+        self._sync()
         if self._on_change: self._on_change()
 
     def remove(self, name):
         if name in self._chips:
             self._chips.remove(name)
-            self._redraw()
+            self._sync()
             if self._on_change: self._on_change()
 
     def clear(self):
+        if not self._chips:
+            return
         self._chips.clear()
-        self._redraw()
+        self._sync()
         if self._on_change: self._on_change()
 
     def get(self):
         return list(self._chips)
 
-    def _redraw(self):
-        for w in self.winfo_children():
-            w.destroy()
-        row_f = None
-        row_used = 0
-        max_w = 230
+    def _sync(self):
+        """
+        Add/remove chip widgets without touching unchanged ones.
+        No destroy/recreate = no flicker.
+        """
+        # Remove widgets for chips that no longer exist
+        gone = [n for n in list(self._widgets) if n not in self._chips]
+        for n in gone:
+            f, _, _ = self._widgets.pop(n)
+            f.pack_forget()
+            f.destroy()
+
+        # Add widgets for new chips
         for name in self._chips:
-            chip_w = len(name) * 7 + 38
-            if row_f is None or (row_used + chip_w > max_w and row_used > 0):
-                row_f = tk.Frame(self, bg=ENTRY_BG)
-                row_f.pack(fill="x", pady=(1, 0))
-                row_used = 0
-            chip = tk.Frame(row_f, bg=CHIP_BG)
-            chip.pack(side="left", padx=(0, 3), pady=2)
-            tk.Label(chip, text=name, bg=CHIP_BG, fg=CHIP_FG,
-                     font=("SF Pro Text", 8), padx=6, pady=2).pack(side="left")
-            x = tk.Label(chip, text="×", bg=CHIP_BG, fg=CHIP_FG,
-                         font=("SF Pro Text", 9, "bold"), padx=4, cursor="hand2")
-            x.pack(side="left")
-            x.bind("<ButtonRelease-1>", lambda e, n=name: self.remove(n))
-            row_used += chip_w
+            if name not in self._widgets:
+                chip = tk.Frame(self, bg=CHIP_BG)
+                lbl  = tk.Label(chip, text=name, bg=CHIP_BG, fg=CHIP_FG,
+                                font=("SF Pro Text", 8), padx=5, pady=2)
+                lbl.pack(side="left")
+                x = tk.Label(chip, text="×", bg=CHIP_BG, fg=CHIP_FG,
+                             font=("SF Pro Text", 9, "bold"), padx=3, cursor="hand2")
+                x.pack(side="left")
+                x.bind("<ButtonRelease-1>", lambda e, n=name: self.remove(n))
+                self._widgets[name] = (chip, lbl, x)
+
+        # Re-pack in correct order (pack_forget + re-pack only, no destroy)
+        for f, _, _ in self._widgets.values():
+            f.pack_forget()
+        for name in self._chips:
+            self._widgets[name][0].pack(side="left", padx=(0, 4), pady=2)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1560,19 +1577,27 @@ class FilterRow(tk.Frame):
 
     def _on_field_change(self, *_):
         self._close_dropdown()
+        new_vt = self._vtype()
+
+        # Skip if same type — no repack needed, avoids flicker
+        if hasattr(self, "_cur_vt") and self._cur_vt == new_vt:
+            return
+        self._cur_vt = new_vt
+
+        # Hide all value widgets without destroying them
         for w in self.val_frame.winfo_children():
             w.pack_forget()
-        vt = self._vtype()
-        if vt in ("company_search", "corp_domain_search"):
+
+        if new_vt in ("company_search", "corp_domain_search"):
             hint = ("Type to search companies…"
-                    if vt == "company_search"
+                    if new_vt == "company_search"
                     else "Type domain (e.g. severfield.com)…")
             self._live_hint.config(text=hint)
             self._live_search_var.set("")
             self._live_entry.pack(side="left")
             self._live_hint.pack(side="left", padx=(4, 0))
             self._live_chip_frame.pack(side="left", padx=(6, 0))
-        elif vt == "inline_filter":
+        elif new_vt == "inline_filter":
             self._if_search_var.set("")
             self._if_entry.pack(side="left")
             self._if_hint.pack(side="left", padx=(4, 0))
@@ -2983,8 +3008,13 @@ class App(ctk.CTk):
         threading.Thread(target=_do, daemon=True).start()
 
     def _populate_tree(self):
+        # Detach tree from display during bulk insert — no per-row flicker
+        self.tree.configure(displaycolumns=self.tree["columns"])
         self.tree.delete(*self.tree.get_children())
         self.contact_vars.clear()
+
+        # Batch all inserts without triggering a redraw each time
+        self.tree.update_idletasks()
         for c in self.all_contacts:
             cid     = c["id"]
             name    = f"{c.get('firstName','')} {c.get('lastName','')}".strip()
@@ -2999,6 +3029,7 @@ class App(ctk.CTk):
             self.contact_vars[cid] = {"remove": False, "data": c}
             vals = ("☑", name, company, title, county, ind, tow, email, status)
             self.tree.insert("", "end", iid=str(cid), values=vals, tags=("keep",))
+
         self._update_count()
         self.auto_status_lbl.config(
             text=f"{len(self.all_contacts)} loaded — enter candidate title and click Apply")
