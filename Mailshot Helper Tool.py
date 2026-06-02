@@ -21,6 +21,91 @@ from urllib.parse import urlparse, parse_qs
 from datetime import datetime
 import platform as _platform
 
+# ── Platform flags ────────────────────────────────────────────────────────────
+IS_WINDOWS = _platform.system() == "Windows"
+IS_MAC     = _platform.system() == "Darwin"
+
+def _popup_show(window, W, H, cx, cy, offset=26):
+    """
+    Show a popup.
+    macOS: fade-in + slide-up animation.
+    Windows: instant show centered (no flicker).
+    """
+    window.geometry(f"{W}x{H}+{cx}+{cy}")
+    if IS_WINDOWS:
+        window.attributes("-alpha", 1.0)
+        window.lift()
+        window.focus_force()
+        return
+    # macOS smooth animation
+    window.geometry(f"{W}x{H}+{cx}+{cy + offset}")
+    window.attributes("-alpha", 0.0)
+    def _animate(step=0):
+        steps = 16
+        ease  = 1 - (1 - step / steps) ** 3
+        window.attributes("-alpha", min(ease, 1.0))
+        y_off = int(offset * (1 - ease))
+        window.geometry(f"{W}x{H}+{cx}+{cy + y_off}")
+        if step < steps:
+            window.after(12, lambda: _animate(step + 1))
+    window.after(10, _animate)
+
+def _popup_hide(window, on_done=None, overlay=None):
+    """
+    Hide a popup.
+    macOS: fade-out animation then destroy.
+    Windows: instant destroy.
+    """
+    if IS_WINDOWS:
+        if overlay:
+            try: overlay.destroy()
+            except Exception: pass
+        try: window.destroy()
+        except Exception: pass
+        if on_done: on_done()
+        return
+    def _step(alpha=1.0):
+        alpha = max(alpha - 0.09, 0.0)
+        try:
+            window.attributes("-alpha", alpha)
+            if overlay:
+                overlay.attributes("-alpha", alpha * 0.45)
+        except Exception:
+            pass
+        if alpha > 0:
+            window.after(14, lambda: _step(alpha))
+        else:
+            if overlay:
+                try: overlay.destroy()
+                except Exception: pass
+            try: window.destroy()
+            except Exception: pass
+            if on_done: on_done()
+    _step()
+
+def _show_overlay(parent):
+    """
+    Dim overlay behind a popup.
+    macOS: semi-transparent black layer fades in.
+    Windows: skip entirely (causes flickering).
+    """
+    if IS_WINDOWS:
+        return None   # no overlay on Windows
+    overlay = tk.Toplevel(parent)
+    overlay.overrideredirect(True)
+    overlay.attributes("-alpha", 0.0)
+    overlay.configure(bg="#000000")
+    parent.update_idletasks()
+    overlay.geometry(f"{parent.winfo_width()}x{parent.winfo_height()}"
+                     f"+{parent.winfo_rootx()}+{parent.winfo_rooty()}")
+    overlay.lift()
+    def _fade(a=0.0):
+        a = min(a + 0.05, 0.45)
+        overlay.attributes("-alpha", a)
+        if a < 0.45: overlay.after(16, lambda: _fade(a))
+    _fade()
+    return overlay
+
 # ── CustomTkinter global appearance ──────────────────────────────────────────
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")  # overridden by custom ACCENT colours below
@@ -1046,22 +1131,10 @@ class MultiSelectPopup(tk.Toplevel):
         self.update_idletasks()
         sx, sy = self.winfo_screenwidth(), self.winfo_screenheight()
         cx, cy = (sx - w) // 2, (sy - h) // 2
-        self.geometry(f"{w}x{h}+{cx}+{cy + 20}")
         self.minsize(360, 380)
         self.columnconfigure(0, weight=1)
         self.rowconfigure(2, weight=1)
-
-        # Fade-in + slide-up
-        self.attributes("-alpha", 0.0)
-        def _animate(step=0):
-            steps = 14
-            ease = 1 - (1 - step / steps) ** 3
-            self.attributes("-alpha", min(ease, 1.0))
-            y_off = int(20 * (1 - ease))
-            self.geometry(f"{w}x{h}+{cx}+{cy + y_off}")
-            if step < steps:
-                self.after(12, lambda: _animate(step + 1))
-        self.after(10, _animate)
+        _popup_show(self, w, h, cx, cy, offset=20)
 
         # Header
         hdr = tk.Frame(self, bg=ACCENT, height=46)
@@ -1667,11 +1740,8 @@ class FilterRow(tk.Frame):
         outer.rowconfigure(0, weight=1)
         outer.columnconfigure(0, weight=1)
 
-        # Fade-in the dropdown frame via a canvas overlay that shrinks
-        try:
-            root.attributes("-alpha")   # check if root supports alpha
-            _orig = root.attributes("-alpha")
-            # We can't alpha individual frames, so do a quick slide-down instead
+        # Slide-down animation — macOS only (Windows flickers with geometry changes)
+        if IS_MAC:
             outer.place(x=ax, y=ay - 8, width=w, height=h)
             def _slide(step=0):
                 steps = 8
@@ -1684,8 +1754,6 @@ class FilterRow(tk.Frame):
                 if step < steps:
                     outer.after(10, lambda: _slide(step + 1))
             outer.after(0, _slide)
-        except Exception:
-            pass
 
         lb = tk.Listbox(outer, bg=CARD, fg=TEXT,
                         selectbackground=SEL_BG, selectforeground=CHIP_FG,
@@ -2032,24 +2100,8 @@ class InstantlyCampaignPopup(tk.Toplevel):
         cx = (sw - W) // 2
         cy = (sh - H) // 2
         # Start 30px below final position for slide-up effect
-        self.geometry(f"{W}x{H}+{cx}+{cy + 30}")
-        self.attributes("-alpha", 0.0)
         self.lift()
-
-        # ── Fade-in + slide-up ────────────────────────────────────────
-        def _animate(step=0):
-            steps = 18
-            t = step / steps
-            # Ease-out cubic
-            ease = 1 - (1 - t) ** 3
-            alpha   = ease
-            y_off   = int(30 * (1 - ease))
-            self.attributes("-alpha", min(alpha, 1.0))
-            self.geometry(f"{W}x{H}+{cx}+{cy + y_off}")
-            if step < steps:
-                self.after(14, lambda: _animate(step + 1))
-
-        self.after(10, lambda: _animate())
+        _popup_show(self, W, H, cx, cy, offset=30)
 
     def _build(self):
         # Green accent strip
@@ -2460,27 +2512,14 @@ class InstantlyCampaignPopup(tk.Toplevel):
             self._status_lbl.configure(text=msg, text_color=GREEN)
             self._create_btn.configure(
                 text="✓ Done!", state="disabled", fg_color=ACCENT_D)
-            self.after(1800, self._fade_close)
+            self.after(800 if IS_WINDOWS else 1800, self._fade_close)
         else:
             self._status_lbl.configure(text=msg, text_color=color)
             self._create_btn.configure(state="normal", fg_color=ACCENT)
 
     def _fade_close(self):
-        """Fade the popup out then destroy it."""
-        def _step(alpha=1.0):
-            alpha = max(alpha - 0.08, 0.0)
-            try:
-                self.attributes("-alpha", alpha)
-            except Exception:
-                pass
-            if alpha > 0:
-                self.after(16, lambda: _step(alpha))
-            else:
-                try:
-                    self.destroy()
-                except Exception:
-                    pass
-        _step()
+        """Close popup — animated on macOS, instant on Windows."""
+        _popup_hide(self)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -3086,19 +3125,7 @@ class App(ctk.CTk):
             return
 
         # ── Dim overlay ────────────────────────────────────────────────
-        overlay = tk.Toplevel(self)
-        overlay.overrideredirect(True)
-        overlay.attributes("-alpha", 0.0)
-        overlay.configure(bg="#000000")
-        self.update_idletasks()
-        overlay.geometry(f"{self.winfo_width()}x{self.winfo_height()}"
-                         f"+{self.winfo_rootx()}+{self.winfo_rooty()}")
-        overlay.lift()
-        def _fade_overlay_in(a=0.0):
-            a = min(a + 0.05, 0.45)
-            overlay.attributes("-alpha", a)
-            if a < 0.45: overlay.after(16, lambda: _fade_overlay_in(a))
-        _fade_overlay_in()
+        overlay = _show_overlay(self)
 
         # ── Dialog ─────────────────────────────────────────────────────
         dlg = tk.Toplevel(self)
@@ -3110,35 +3137,15 @@ class App(ctk.CTk):
         W, H = 500, 360
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
         cx, cy = (sw - W) // 2, (sh - H) // 2
-        dlg.geometry(f"{W}x{H}+{cx}+{cy + 24}")
-        dlg.attributes("-alpha", 0.0)
         dlg.lift()
-
-        def _animate(step=0):
-            steps = 16
-            ease = 1 - (1 - step / steps) ** 3
-            dlg.attributes("-alpha", min(ease, 1.0))
-            dlg.geometry(f"{W}x{H}+{cx}+{cy + int(24*(1-ease))}")
-            if step < steps: dlg.after(12, lambda: _animate(step + 1))
-        dlg.after(10, _animate)
+        _popup_show(dlg, W, H, cx, cy, offset=24)
 
         def _close_all():
-            def _fade_out(a=0.45):
-                a = max(a - 0.07, 0.0)
-                try:
-                    overlay.attributes("-alpha", a)
-                    dlg.attributes("-alpha", a * (1/0.45))
-                except Exception: pass
-                if a > 0: overlay.after(16, lambda: _fade_out(a))
-                else:
-                    try: overlay.destroy()
-                    except Exception: pass
-                    try: dlg.destroy()
-                    except Exception: pass
-            _fade_out()
+            _popup_hide(dlg, overlay=overlay)
 
-        dlg.bind("<Destroy>", lambda e: (overlay.destroy()
-                                          if e.widget is dlg else None))
+        if overlay:
+            dlg.bind("<Destroy>",
+                     lambda e, ov=overlay: (ov.destroy() if e.widget is dlg else None))
 
         # ── Header ─────────────────────────────────────────────────────
         ctk.CTkFrame(dlg, fg_color=ACCENT, corner_radius=0, height=4).pack(fill="x")
@@ -3309,7 +3316,7 @@ class App(ctk.CTk):
             # Show success briefly then close with fade
             self.after(0, lambda: status_lbl.configure(text=msg, text_color=GREEN))
             self.after(0, lambda: save_btn.configure(text="✓ Saved!", fg_color=ACCENT_D))
-            self.after(1600, close_cb)
+            self.after(800 if IS_WINDOWS else 1600, close_cb)
         else:
             self.after(0, lambda: status_lbl.configure(text=msg, text_color=RED))
             self.after(0, lambda: save_btn.configure(state="normal", text="Save to Bullhorn",
@@ -3329,45 +3336,11 @@ class App(ctk.CTk):
                                    "None of the selected contacts have an email address.")
             return
 
-        # ── Dim overlay (fake blur) ────────────────────────────────────
-        overlay = tk.Toplevel(self)
-        overlay.overrideredirect(True)
-        overlay.attributes("-alpha", 0.0)
-        overlay.configure(bg="#000000")
-        # Cover the main window exactly
-        self.update_idletasks()
-        x, y = self.winfo_rootx(), self.winfo_rooty()
-        w, h = self.winfo_width(), self.winfo_height()
-        overlay.geometry(f"{w}x{h}+{x}+{y}")
-        overlay.lift()
-
-        # Fade overlay in
-        def _fade_overlay(alpha=0.0):
-            alpha = min(alpha + 0.05, 0.45)
-            overlay.attributes("-alpha", alpha)
-            if alpha < 0.45:
-                overlay.after(16, lambda: _fade_overlay(alpha))
-
-        _fade_overlay()
-
-        # Launch popup with slide-up + fade-in
-        popup = InstantlyCampaignPopup(self, self.instantly, with_email)
-
-        # Destroy overlay when popup closes
-        def _on_popup_close():
-            def _fade_out(alpha=0.45):
-                alpha = max(alpha - 0.07, 0.0)
-                try:
-                    overlay.attributes("-alpha", alpha)
-                    if alpha > 0:
-                        overlay.after(16, lambda: _fade_out(alpha))
-                    else:
-                        overlay.destroy()
-                except Exception:
-                    pass
-            _fade_out()
-
-        popup.bind("<Destroy>", lambda e: _on_popup_close() if e.widget is popup else None)
+        overlay = _show_overlay(self)
+        popup   = InstantlyCampaignPopup(self, self.instantly, with_email)
+        if overlay:
+            popup.bind("<Destroy>",
+                       lambda e, ov=overlay: (ov.destroy() if e.widget is popup else None))
 
 
 # ═══════════════════════════════════════════════════════════════════════════
