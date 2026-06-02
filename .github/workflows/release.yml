@@ -14,15 +14,12 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Install dependencies
         run: pip install customtkinter requests pillow pyinstaller
-
-      - name: Inject credentials into config.json
+      - name: Inject credentials
         env:
           BULLHORN_CLIENT_ID:     ${{ secrets.BULLHORN_CLIENT_ID }}
           BULLHORN_CLIENT_SECRET: ${{ secrets.BULLHORN_CLIENT_SECRET }}
@@ -31,20 +28,9 @@ jobs:
           INSTANTLY_API_KEY:      ${{ secrets.INSTANTLY_API_KEY }}
         run: |
           python3 -c "
-          import json, os
-          cfg = {
-            'bullhorn_client_id':     os.environ['BULLHORN_CLIENT_ID'],
-            'bullhorn_client_secret': os.environ['BULLHORN_CLIENT_SECRET'],
-            'bullhorn_username':      os.environ['BULLHORN_USERNAME'],
-            'bullhorn_password':      os.environ['BULLHORN_PASSWORD'],
-            'bullhorn_redirect_uri':  'https://welcome.bullhornstaffing.com',
-            'instantly_api_key':      os.environ['INSTANTLY_API_KEY'],
-          }
-          with open('config.json', 'w') as f:
-              json.dump(cfg, f, indent=2)
-          print('config.json written with credentials')
+          import json,os
+          json.dump({'bullhorn_client_id':os.environ['BULLHORN_CLIENT_ID'],'bullhorn_client_secret':os.environ['BULLHORN_CLIENT_SECRET'],'bullhorn_username':os.environ['BULLHORN_USERNAME'],'bullhorn_password':os.environ['BULLHORN_PASSWORD'],'bullhorn_redirect_uri':'https://welcome.bullhornstaffing.com','instantly_api_key':os.environ['INSTANTLY_API_KEY']},open('config.json','w'),indent=2)
           "
-
       - name: Convert logo to .icns
         run: |
           mkdir -p logo.iconset
@@ -53,22 +39,15 @@ jobs:
             sips -z $((sz*2)) $((sz*2)) logo.png --out logo.iconset/icon_${sz}x${sz}@2x.png
           done
           iconutil -c icns logo.iconset -o logo.icns
-
       - name: Build .app
         run: |
-          pyinstaller \
-            --noconfirm --windowed \
-            --name "Mailshot Helper Tool" \
-            --icon logo.icns \
-            --add-data "config.json:." \
-            --add-data "logo.png:." \
-            --hidden-import customtkinter \
-            --collect-all customtkinter \
+          pyinstaller --noconfirm --windowed \
+            --name "Mailshot Helper Tool" --icon logo.icns \
+            --add-data "config.json:." --add-data "logo.png:." \
+            --hidden-import customtkinter --collect-all customtkinter \
             "Mailshot Helper Tool.py"
-
       - name: Zip
         run: cd dist && zip -r "Mailshot-Helper-Tool-macOS.zip" "Mailshot Helper Tool.app"
-
       - uses: actions/upload-artifact@v4
         with:
           name: macos-build
@@ -79,15 +58,12 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Install dependencies
         run: pip install customtkinter requests pillow pyinstaller
-
-      - name: Inject credentials into config.json
+      - name: Inject credentials
         env:
           BULLHORN_CLIENT_ID:     ${{ secrets.BULLHORN_CLIENT_ID }}
           BULLHORN_CLIENT_SECRET: ${{ secrets.BULLHORN_CLIENT_SECRET }}
@@ -95,49 +71,20 @@ jobs:
           BULLHORN_PASSWORD:      ${{ secrets.BULLHORN_PASSWORD }}
           INSTANTLY_API_KEY:      ${{ secrets.INSTANTLY_API_KEY }}
         run: |
-          python -c "
-          import json, os
-          cfg = {
-            'bullhorn_client_id':     os.environ['BULLHORN_CLIENT_ID'],
-            'bullhorn_client_secret': os.environ['BULLHORN_CLIENT_SECRET'],
-            'bullhorn_username':      os.environ['BULLHORN_USERNAME'],
-            'bullhorn_password':      os.environ['BULLHORN_PASSWORD'],
-            'bullhorn_redirect_uri':  'https://welcome.bullhornstaffing.com',
-            'instantly_api_key':      os.environ['INSTANTLY_API_KEY'],
-          }
-          with open('config.json', 'w') as f:
-              json.dump(cfg, f, indent=2)
-          print('config.json written with credentials')
-          "
-
+          python -c "import json,os; json.dump({'bullhorn_client_id':os.environ['BULLHORN_CLIENT_ID'],'bullhorn_client_secret':os.environ['BULLHORN_CLIENT_SECRET'],'bullhorn_username':os.environ['BULLHORN_USERNAME'],'bullhorn_password':os.environ['BULLHORN_PASSWORD'],'bullhorn_redirect_uri':'https://welcome.bullhornstaffing.com','instantly_api_key':os.environ['INSTANTLY_API_KEY']},open('config.json','w'),indent=2)"
       - name: Convert logo to .ico
-        run: |
-          python -c "
-          from PIL import Image
-          img = Image.open('logo.png').convert('RGBA')
-          bg = Image.new('RGBA',(256,256),(42,42,42,255))
-          bg.paste(img,(0,0),img)
-          bg.save('logo.ico',format='ICO',sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])
-          "
-
+        run: python -c "from PIL import Image; img=Image.open('logo.png').convert('RGBA'); bg=Image.new('RGBA',(256,256),(42,42,42,255)); bg.paste(img,(0,0),img); bg.save('logo.ico',format='ICO',sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"
       - name: Build .exe
         run: |
-          pyinstaller `
-            --noconfirm --windowed --onedir --noupx --clean `
-            --name "Mailshot Helper Tool" `
-            --icon logo.ico `
-            --add-data "config.json;." `
-            --add-data "logo.png;." `
-            --hidden-import customtkinter `
-            --collect-all customtkinter `
+          pyinstaller --noconfirm --windowed --onedir --noupx --clean `
+            --name "Mailshot Helper Tool" --icon logo.ico `
+            --add-data "config.json;." --add-data "logo.png;." `
+            --hidden-import customtkinter --collect-all customtkinter `
             "Mailshot Helper Tool.py"
-
-      - name: Copy config next to exe
+      - name: Copy config
         run: Copy-Item config.json "dist\Mailshot Helper Tool\config.json"
-
       - name: Zip
         run: Compress-Archive -Path "dist\Mailshot Helper Tool" -DestinationPath "dist\Mailshot-Helper-Tool-Windows.zip"
-
       - uses: actions/upload-artifact@v4
         with:
           name: windows-build
@@ -151,32 +98,56 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           name: macos-build
           path: release-files
+
       - uses: actions/download-artifact@v4
         with:
           name: windows-build
           path: release-files
+
       - name: Get version
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-      - uses: softprops/action-gh-release@v2
+
+      - name: Build release notes from CHANGELOG
+        id: notes
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          # Extract section for this version from CHANGELOG.md
+          python3 - <<'PYEOF'
+          import re, sys
+          version = "${{ steps.version.outputs.VERSION }}"
+          try:
+              text = open("CHANGELOG.md").read()
+              # Match from this version header to the next ## header
+              pattern = rf"## \[{re.escape(version)}\][^\n]*\n(.*?)(?=\n## \[|\Z)"
+              m = re.search(pattern, text, re.DOTALL)
+              notes = m.group(1).strip() if m else f"See CHANGELOG.md for details."
+          except Exception as e:
+              notes = f"See CHANGELOG.md for details."
+          with open("release_notes.md", "w") as f:
+              f.write(f"## What's changed in {version}\n\n")
+              f.write(notes)
+              f.write("\n\n---\n\n")
+              f.write("### Downloads\n")
+              f.write("| Platform | File |\n|---|---|\n")
+              f.write("| **macOS** | `Mailshot-Helper-Tool-macOS.zip` — unzip and double-click the .app |\n")
+              f.write("| **Windows** | `Mailshot-Helper-Tool-Windows.zip` — unzip and run the .exe inside the folder |\n\n")
+              f.write("> **macOS:** If blocked by Gatekeeper, right-click → Open → Open\n")
+              f.write("> **Windows:** If SmartScreen appears, click More info → Run anyway\n")
+          PYEOF
+          cat release_notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.VERSION }}
           name: "Mailshot Helper Tool ${{ steps.version.outputs.VERSION }}"
-          body: |
-            ## Mailshot Helper Tool ${{ steps.version.outputs.VERSION }}
-
-            ### Downloads
-            | Platform | File |
-            |---|---|
-            | **macOS** | `Mailshot-Helper-Tool-macOS.zip` — unzip and double-click the .app |
-            | **Windows** | `Mailshot-Helper-Tool-Windows.zip` — unzip and run the .exe inside |
-
-            > **macOS:** If blocked by Gatekeeper, right-click → Open → Open
-            > **Windows:** If SmartScreen appears, click More info → Run anyway
+          body_path: release_notes.md
           files: |
             release-files/Mailshot-Helper-Tool-macOS.zip
             release-files/Mailshot-Helper-Tool-Windows.zip
