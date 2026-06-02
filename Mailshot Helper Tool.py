@@ -1230,58 +1230,60 @@ class BullhornAPI:
             return False
 
     def start_oauth_flow(self, on_success, on_error):
+        """
+        Authenticates with Bullhorn using the password grant flow —
+        no browser, no Selenium, no ChromeDriver required.
+        Works identically when packaged as a .app or .exe.
+        """
         def _run():
-            driver = None
             try:
-                from selenium import webdriver
-                from selenium.webdriver.chrome.options import Options
-                from selenium.webdriver.chrome.service import Service
-                import time as _t
-
                 self._detect_dc()
-                pw_enc   = urllib.parse.quote(PASSWORD, safe="")
+
+                # Step 1: Get auth code via direct POST (no browser needed)
+                pw_enc = urllib.parse.quote(PASSWORD, safe="")
                 auth_url = (
                     f"{self._auth_url}"
                     f"?client_id={CLIENT_ID}&response_type=code&action=Login"
-                    f"&username={USERNAME}&password={pw_enc}&redirect_uri={REDIRECT_URI}"
+                    f"&username={USERNAME}&password={pw_enc}"
+                    f"&redirect_uri={REDIRECT_URI}"
                 )
-                opts = Options()
-                opts.add_argument("--window-size=520,500")
-                opts.add_argument("--window-position=300,180")
-                opts.add_experimental_option("excludeSwitches", ["enable-automation"])
-                opts.add_experimental_option("useAutomationExtension", False)
-                try:
-                    driver = webdriver.Chrome(options=opts)
-                except Exception:
-                    driver = webdriver.Chrome(service=Service(), options=opts)
-                driver.get(auth_url)
-                deadline = _t.time() + 120
+                # Follow redirects and capture the code from the final URL
+                session = requests.Session()
+                resp = session.get(auth_url, allow_redirects=True, timeout=30)
+
+                # The code is in the final redirect URL
+                final_url = resp.url
                 code = None
-                while _t.time() < deadline:
-                    try:
-                        url = driver.current_url
-                        if "welcome.bullhornstaffing.com" in url and "code=" in url:
-                            params = parse_qs(urlparse(url).query)
-                            code = params.get("code", [None])[0]
-                            if code: break
-                    except Exception: pass
-                    _t.sleep(0.3)
-                driver.quit(); driver = None
-                if not code: raise Exception("Timed out waiting for Bullhorn redirect.")
+                if "code=" in final_url:
+                    params = parse_qs(urlparse(final_url).query)
+                    code = params.get("code", [None])[0]
+
+                # If not in URL, check response body for redirect
+                if not code and "code=" in resp.text:
+                    import re as _re
+                    m = _re.search(r'[?&]code=([^&"\'\\s]+)', resp.text)
+                    if m:
+                        code = m.group(1)
+
+                if not code:
+                    raise Exception(
+                        "Could not get authorisation code from Bullhorn.\n"
+                        "Check your username, password and client credentials in config.json."
+                    )
+
+                # Step 2: Exchange code for tokens
                 self._exchange_and_login({
-                    "grant_type": "authorization_code", "code": code,
-                    "client_id": CLIENT_ID, "client_secret": CLIENT_SECRET,
+                    "grant_type":   "authorization_code",
+                    "code":         code,
+                    "client_id":    CLIENT_ID,
+                    "client_secret": CLIENT_SECRET,
                     "redirect_uri": REDIRECT_URI,
                 })
                 on_success()
-            except ImportError:
-                on_error("selenium not installed.\n\nRun: pip install selenium")
+
             except Exception as e:
                 on_error(str(e))
-            finally:
-                if driver:
-                    try: driver.quit()
-                    except Exception: pass
+
         threading.Thread(target=_run, daemon=True).start()
 
     def _req(self, method, path, **kwargs):
