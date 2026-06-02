@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.spec
+
+# PyInstaller output
+dist/
+build/
+*.spec
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V100
+.Trashes
+*.icns
+*.iconset/
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+*.ico
+
+# Sensitive — never commit real credentials
+# config.json is committed as a TEMPLATE with placeholder values
+# The actual config with real keys stays local only
+
+# Logs
+*.log
+bullhorn_session.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

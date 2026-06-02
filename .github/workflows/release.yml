@@ -1,0 +1,208 @@
+name: Build & Release
+
+# Triggers on version tags like v1.0.0, v1.2.3
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  # ── macOS build ─────────────────────────────────────────────────────────────
+  build-macos:
+    name: Build macOS .app
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install customtkinter requests pillow pyinstaller pyobjc-framework-Cocoa
+
+      - name: Convert logo.png → .icns
+        run: |
+          if [ -f logo.png ]; then
+            mkdir -p logo.iconset
+            sips -z 16   16   logo.png --out logo.iconset/icon_16x16.png
+            sips -z 32   32   logo.png --out logo.iconset/icon_16x16@2x.png
+            sips -z 32   32   logo.png --out logo.iconset/icon_32x32.png
+            sips -z 64   64   logo.png --out logo.iconset/icon_32x32@2x.png
+            sips -z 128  128  logo.png --out logo.iconset/icon_128x128.png
+            sips -z 256  256  logo.png --out logo.iconset/icon_128x128@2x.png
+            sips -z 256  256  logo.png --out logo.iconset/icon_256x256.png
+            sips -z 512  512  logo.png --out logo.iconset/icon_256x256@2x.png
+            sips -z 512  512  logo.png --out logo.iconset/icon_512x512.png
+            iconutil -c icns logo.iconset -o logo.icns
+            echo "✓ logo.icns created"
+          fi
+
+      - name: Build macOS .app with PyInstaller
+        run: |
+          ICON_ARG=""
+          [ -f logo.icns ] && ICON_ARG="--icon=logo.icns"
+          pyinstaller \
+            --noconfirm \
+            --windowed \
+            --name "Cornerstone Mailshot" \
+            $ICON_ARG \
+            --add-data "config.json:." \
+            --add-data "logo.png:." \
+            --hidden-import customtkinter \
+            --hidden-import PIL \
+            --collect-all customtkinter \
+            AllInOneTool.py
+
+      - name: Zip the .app
+        run: |
+          cd dist
+          zip -r "Cornerstone-Mailshot-macOS.zip" "Cornerstone Mailshot.app"
+          echo "✓ Zipped: $(du -sh Cornerstone-Mailshot-macOS.zip)"
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-build
+          path: dist/Cornerstone-Mailshot-macOS.zip
+
+  # ── Windows build ────────────────────────────────────────────────────────────
+  build-windows:
+    name: Build Windows .exe
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install customtkinter requests pillow pyinstaller
+
+      - name: Convert logo.png → .ico
+        run: |
+          python -c "
+          from PIL import Image
+          import os
+          if os.path.exists('logo.png'):
+              img = Image.open('logo.png').convert('RGBA')
+              bg = Image.new('RGBA', (256,256), (42,42,42,255))
+              bg.paste(img, (0,0), img)
+              sizes = [(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)]
+              bg.save('logo.ico', format='ICO', sizes=sizes)
+              print('logo.ico created')
+          "
+
+      - name: Build Windows .exe with PyInstaller
+        run: |
+          $iconArg = ""
+          if (Test-Path "logo.ico") { $iconArg = "--icon=logo.ico" }
+          pyinstaller `
+            --noconfirm `
+            --windowed `
+            --onedir `
+            --noupx `
+            --clean `
+            --name "Cornerstone Mailshot" `
+            $iconArg `
+            --add-data "config.json;." `
+            --add-data "logo.png;." `
+            --hidden-import customtkinter `
+            --hidden-import PIL `
+            --collect-all customtkinter `
+            --exclude-module matplotlib `
+            --exclude-module scipy `
+            AllInOneTool.py
+
+      - name: Copy config.json next to exe
+        run: |
+          Copy-Item config.json "dist\Cornerstone Mailshot\config.json"
+
+      - name: Zip the Windows build
+        run: |
+          Compress-Archive -Path "dist\Cornerstone Mailshot" -DestinationPath "dist\Cornerstone-Mailshot-Windows.zip"
+          Write-Host "Zipped Windows build"
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: dist/Cornerstone-Mailshot-Windows.zip
+
+  # ── Create GitHub Release ────────────────────────────────────────────────────
+  release:
+    name: Create GitHub Release
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download macOS build
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-build
+          path: release-files
+
+      - name: Download Windows build
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-build
+          path: release-files
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          # Extract the section for this version from CHANGELOG.md
+          NOTES=$(awk "/^## \[$VERSION\]/{found=1; next} found && /^## \[/{exit} found{print}" CHANGELOG.md)
+          if [ -z "$NOTES" ]; then
+            NOTES="See CHANGELOG.md for full details."
+          fi
+          echo "NOTES<<EOF" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.VERSION }}
+          name: "Cornerstone Mailshot ${{ steps.version.outputs.VERSION }}"
+          body: |
+            ## Cornerstone Mailshot ${{ steps.version.outputs.VERSION }}
+
+            ${{ steps.changelog.outputs.NOTES }}
+
+            ---
+
+            ### 📥 Downloads
+
+            | Platform | File | Notes |
+            |---|---|---|
+            | **macOS** | `Cornerstone-Mailshot-macOS.zip` | Unzip → double-click the .app |
+            | **Windows** | `Cornerstone-Mailshot-Windows.zip` | Unzip → run .exe inside the folder |
+
+            > **Windows users:** If SmartScreen appears, click **"More info" → "Run anyway"**
+            > **macOS users:** If Gatekeeper blocks it, right-click → Open → Open
+
+            ### ⚙️ After installing
+            Edit `config.json` in the same folder as the app to update API keys.
+          files: |
+            release-files/Cornerstone-Mailshot-macOS.zip
+            release-files/Cornerstone-Mailshot-Windows.zip
+          draft: false
+          prerelease: false
