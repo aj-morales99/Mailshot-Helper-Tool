@@ -83,35 +83,22 @@ jobs:
             "Mailshot Helper Tool.py"
       - name: Copy config
         run: Copy-Item config.json "dist\Mailshot Helper Tool\config.json"
-      - name: Create desktop shortcut and install instructions
+      - name: Add install instructions
         shell: pwsh
+        continue-on-error: true
         run: |
-          $folder  = Resolve-Path "dist\Mailshot Helper Tool"
-          $exePath = Join-Path $folder "Mailshot Helper Tool.exe"
-          $lnkPath = Join-Path $folder "Mailshot Helper Tool - Shortcut.lnk"
-          try {
-            $shell    = New-Object -ComObject WScript.Shell
-            $shortcut = $shell.CreateShortcut($lnkPath)
-            $shortcut.TargetPath      = $exePath
-            $shortcut.WorkingDirectory = $folder
-            $shortcut.Description     = "Mailshot Helper Tool"
-            $shortcut.Save()
-            Write-Host "Shortcut created: $lnkPath"
-          } catch {
-            Write-Host "Shortcut creation skipped: $_"
-          }
-          $instructions = @"
-Mailshot Helper Tool
+          $txt = @"
+Mailshot Helper Tool - How to Install
 
-1. Keep this entire folder somewhere permanent (e.g. Documents)
-2. Drag [Mailshot Helper Tool - Shortcut.lnk] to your Desktop
-3. Double-click the shortcut to launch the app
+1. Keep this entire folder somewhere permanent (e.g. Documents or C:\Tools)
+2. Right-click 'Mailshot Helper Tool.exe' inside this folder
+3. Select 'Send to' > 'Desktop (create shortcut)'
+4. Double-click the shortcut on your Desktop to launch
 
-NOTE: Do not move the shortcut without keeping the folder.
-The shortcut must point to the exe inside this folder.
+NOTE: Do not move the exe out of this folder - it needs the other files next to it.
 "@
-          $instructions | Out-File -FilePath (Join-Path $folder "HOW TO INSTALL.txt") -Encoding utf8
-          Write-Host "HOW TO INSTALL.txt created"
+          $txt | Out-File -FilePath "dist\Mailshot Helper Tool\HOW TO INSTALL.txt" -Encoding utf8
+          Write-Host "Created HOW TO INSTALL.txt"
       - name: Zip
         run: Compress-Archive -Path "dist\Mailshot Helper Tool" -DestinationPath "dist\Mailshot-Helper-Tool-Windows.zip"
       - uses: actions/upload-artifact@v4
