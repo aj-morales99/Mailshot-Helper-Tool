@@ -87,16 +87,7 @@ jobs:
         shell: pwsh
         continue-on-error: true
         run: |
-          $txt = @"
-Mailshot Helper Tool - How to Install
-
-1. Keep this entire folder somewhere permanent (e.g. Documents or C:\Tools)
-2. Right-click 'Mailshot Helper Tool.exe' inside this folder
-3. Select 'Send to' > 'Desktop (create shortcut)'
-4. Double-click the shortcut on your Desktop to launch
-
-NOTE: Do not move the exe out of this folder - it needs the other files next to it.
-"@
+          $txt = "Mailshot Helper Tool`r`n`r`n1. Keep this entire folder somewhere permanent (e.g. Documents)`r`n2. Right-click Mailshot Helper Tool.exe and choose Send to > Desktop (create shortcut)`r`n3. Double-click the shortcut on your Desktop to launch`r`n`r`nNOTE: Do not move the exe out of this folder."
           $txt | Out-File -FilePath "dist\Mailshot Helper Tool\HOW TO INSTALL.txt" -Encoding utf8
           Write-Host "Created HOW TO INSTALL.txt"
       - name: Zip
