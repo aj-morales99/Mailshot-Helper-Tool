@@ -1868,22 +1868,39 @@ class FilterRow(tk.Frame):
         self.destroy()
 
     # ── Data accessors ────────────────────────────────────────────────────
-    def get_values(self):
-        vt = self._vtype()
-        if vt in ("company_search", "corp_domain_search"):
-            return self._live_chip_frame.get()
-        if vt == "inline_filter":
-            return self._if_chip_frame.get()
-        return self._text_chip_frame.get()
-
     def to_lucene(self):
-        field, _, _ = FIELD_MAP.get(self.field_var.get(),
-                                     (self.field_var.get(), "text", None))
+        field, vt, _ = FIELD_MAP.get(self.field_var.get(),
+                                    (self.field_var.get(), "text", None))
         values = self.get_values()
         op     = self.op_var.get()
         if not values:
             return None
-        clauses = [f'{field}:"{v}"' for v in values]
+
+        # Company Email Domain — field is clientCorporation.customTextBlock1
+        if vt == "corp_domain_search":
+            clauses = []
+            for v in values:
+                v = v.strip().lstrip("@")
+                clauses.append(f'clientCorporation.customTextBlock1:(@{v})')
+            
+            # FIX: If there's only 1 domain, don't wrap in extra parentheses
+            if len(clauses) == 1:
+                if op == "Exclude": return f"NOT {clauses[0]}"
+                return clauses[0]
+                
+            if op == "Include Any": return "(" + " OR ".join(clauses) + ")"
+            if op == "Exclude":     return "NOT (" + " OR ".join(clauses) + ")"
+            return "(" + " OR ".join(clauses) + ")"
+
+        # Format the standard clauses as field:("value") in lowercase
+        clauses = [f'{field}:("{str(v).lower()}")' for v in values]
+        
+        # FIX: If there is only 1 clause, return it directly without outer ()
+        if len(clauses) == 1:
+            if op == "Exclude": return f"NOT {clauses[0]}"
+            return clauses[0]
+
+        # If there are multiple clauses, safely use parentheses and operators
         if op == "Include Any": return "(" + " OR ".join(clauses) + ")"
         if op == "Include All": return "(" + " AND ".join(clauses) + ")"
         if op == "Exclude":     return "NOT (" + " OR ".join(clauses) + ")"
