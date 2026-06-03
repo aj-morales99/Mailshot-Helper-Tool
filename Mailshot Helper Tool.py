@@ -1435,7 +1435,7 @@ FILTER_DEFS = [
     # (display_name, bh_field, value_type, options_list_or_None)
     ("Company",              "clientCorporation.name",             "company_search",      None),
     ("Work Email",           "email",                              "text",                None),
-    ("Company Email Domain", "clientCorporation.customTextBlock1", "corp_domain_search",  None),
+    ("Company Email Domain", "clientCorporation.customTextBlock1", "text",                None),
     ("Status",               "status",                             "inline_filter",       STATUS_OPTIONS),
     ("Email Status",         "customTextBlock1",                   "inline_filter",       EMAIL_STATUS_OPTIONS),
     ("Custom Industry",      "customTextBlock4",                   "inline_filter",       INDUSTRY_OPTIONS),
@@ -1456,7 +1456,7 @@ class FilterRow(tk.Frame):
     Value-type behaviours:
       text             – CTkEntry, Enter adds chip
       company_search   – debounced BH search → floating dropdown
-      corp_domain_search – BH domain search
+      corp_domain_search – (unused, domain field now uses text type)
       inline_filter    – click → filtered list
     """
     _api_ref = None
@@ -1512,7 +1512,7 @@ class FilterRow(tk.Frame):
         self._text_entry = ctk.CTkEntry(self.val_frame, textvariable=self.val_var,
                                          fg_color=ENTRY_BG, text_color=TEXT,
                                          border_color=BORDER, border_width=1,
-                                         corner_radius=8, placeholder_text="↵ enter to add",
+                                         corner_radius=8, placeholder_text="↵ enter to add  (e.g. severfield.com)",
                                          placeholder_text_color=SUBTEXT,
                                          font=ctk.CTkFont("SF Pro Text", 11), width=240, height=32)
         self._text_entry.bind("<Return>", self._add_text_chip)
@@ -1575,7 +1575,7 @@ class FilterRow(tk.Frame):
         for w in self.val_frame.winfo_children():
             w.pack_forget()
 
-        if new_vt in ("company_search", "corp_domain_search"):
+        if new_vt == "company_search":
             hint = ("Type to search companies…"
                     if new_vt == "company_search"
                     else "Type domain (e.g. severfield.com)…")
@@ -1870,7 +1870,7 @@ class FilterRow(tk.Frame):
     # ── Data accessors ────────────────────────────────────────────────────
     def get_values(self):
         vt = self._vtype()
-        if vt in ("company_search", "corp_domain_search"):
+        if vt == "company_search":
             return self._live_chip_frame.get()
         if vt == "inline_filter":
             return self._if_chip_frame.get()
@@ -1884,18 +1884,17 @@ class FilterRow(tk.Frame):
         if not values:
             return None
 
-        # Company Email Domain — field is clientCorporation.customTextBlock1
-        if vt == "corp_domain_search":
+        # Company Email Domain — detected by field name (type is "text" but needs @domain format)
+        # Builds: NOT clientCorporation.customTextBlock1:(@severfield.com)
+        # User types: "severfield.com" or "@severfield.com" — both accepted
+        if field == "clientCorporation.customTextBlock1":
             clauses = []
             for v in values:
                 v = v.strip().lstrip("@")
                 clauses.append(f'clientCorporation.customTextBlock1:(@{v})')
-            
-            # FIX: If there's only 1 domain, don't wrap in extra parentheses
             if len(clauses) == 1:
-                if op == "Exclude": return f"NOT {clauses[0]}"
+                if op == "Exclude":     return f"NOT {clauses[0]}"
                 return clauses[0]
-                
             if op == "Include Any": return "(" + " OR ".join(clauses) + ")"
             if op == "Exclude":     return "NOT (" + " OR ".join(clauses) + ")"
             return "(" + " OR ".join(clauses) + ")"
