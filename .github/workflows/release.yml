@@ -83,6 +83,30 @@ jobs:
             "Mailshot Helper Tool.py"
       - name: Copy config
         run: Copy-Item config.json "dist\Mailshot Helper Tool\config.json"
+      - name: Create desktop shortcut inside folder
+        run: |
+          powershell -Command "
+            \$folder   = Resolve-Path 'dist\Mailshot Helper Tool'
+            \$exePath  = Join-Path \$folder 'Mailshot Helper Tool.exe'
+            \$lnkPath  = Join-Path \$folder 'Mailshot Helper Tool - Shortcut.lnk'
+            \$shell     = New-Object -ComObject WScript.Shell
+            \$shortcut  = \$shell.CreateShortcut(\$lnkPath)
+            \$shortcut.TargetPath     = \$exePath
+            \$shortcut.WorkingDirectory = \$folder
+            \$shortcut.Description    = 'Mailshot Helper Tool'
+            \$shortcut.Save()
+            Write-Host 'Shortcut created:' \$lnkPath
+          "
+      - name: Add README text file with instructions
+        run: |
+          echo "Mailshot Helper Tool" > "dist\Mailshot Helper Tool\HOW TO INSTALL.txt"
+          echo "" >> "dist\Mailshot Helper Tool\HOW TO INSTALL.txt"
+          echo "1. Keep this entire folder somewhere permanent (e.g. Documents or Desktop folder)" >> "dist\Mailshot Helper Tool\HOW TO INSTALL.txt"
+          echo "2. Drag 'Mailshot Helper Tool - Shortcut.lnk' to your Desktop" >> "dist\Mailshot Helper Tool\HOW TO INSTALL.txt"
+          echo "3. Double-click the shortcut on your Desktop to launch the app" >> "dist\Mailshot Helper Tool\HOW TO INSTALL.txt"
+          echo "" >> "dist\Mailshot Helper Tool\HOW TO INSTALL.txt"
+          echo "IMPORTANT: Do not move just the shortcut without the folder." >> "dist\Mailshot Helper Tool\HOW TO INSTALL.txt"
+          echo "The shortcut must point to the exe inside this folder." >> "dist\Mailshot Helper Tool\HOW TO INSTALL.txt"
       - name: Zip
         run: Compress-Archive -Path "dist\Mailshot Helper Tool" -DestinationPath "dist\Mailshot-Helper-Tool-Windows.zip"
       - uses: actions/upload-artifact@v4
