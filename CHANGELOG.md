@@ -1,3 +1,10 @@
+## [v1.0.7] — 2026-06-03
+- Fixed missing get_values() method accidentally removed in previous edit
+- Stop on reply, open tracking, link tracking all default to disabled in Instantly
+- Company filter now defaults to Exclude instead of Include Any
+- Company Email Domain query now uses correct @domain.com format matching Bullhorn storage
+- Inline filter clauses now use lowercase matching for better Bullhorn Lucene compatibility
+
 # Changelog
 
 ## [v1.0.5] — 2026-06-02

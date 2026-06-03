@@ -1868,6 +1868,14 @@ class FilterRow(tk.Frame):
         self.destroy()
 
     # ── Data accessors ────────────────────────────────────────────────────
+    def get_values(self):
+        vt = self._vtype()
+        if vt in ("company_search", "corp_domain_search"):
+            return self._live_chip_frame.get()
+        if vt == "inline_filter":
+            return self._if_chip_frame.get()
+        return self._text_chip_frame.get()
+
     def to_lucene(self):
         field, vt, _ = FIELD_MAP.get(self.field_var.get(),
                                     (self.field_var.get(), "text", None))
@@ -2043,10 +2051,10 @@ class InstantlyAPI:
             "name":                    name,
             "campaign_schedule":       schedule_payload,
             "daily_limit":             daily_limit,
-            "stop_on_reply":           True,
-            "stop_on_auto_reply":      True,
-            "open_tracking":           True,
-            "link_tracking":           True,
+            "stop_on_reply":           False,
+            "stop_on_auto_reply":      False,
+            "open_tracking":           False,
+            "link_tracking":           False,
             "text_only":               text_only,
             "first_email_text_only":   first_text_only,
         }
@@ -2793,7 +2801,7 @@ class App(ctk.CTk):
         self.filter_rows.clear()
 
     DEFAULT_FILTERS = [
-        ("Company",              "Include Any"),
+        ("Company",              "Exclude"),
         ("Work Email",           "Exclude"),
         ("Company Email Domain", "Exclude"),
         ("Status",               "Exclude"),
