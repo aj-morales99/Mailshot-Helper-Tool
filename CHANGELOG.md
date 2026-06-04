@@ -2,6 +2,7 @@
 - Focus stays in search/filter entry after selecting a value — no need to click back
 - Stop on reply and open/link tracking now correctly disabled when creating Instantly campaigns
 - Added email sequence drafter in Push to Instantly popup — draft subject and body (plain text or HTML) before creating the campaign
+- Fixed multi-word company search ("Met Structures", "Balfour Beatty" etc.) — now splits words and searches each token separately
 
 # Changelog
 

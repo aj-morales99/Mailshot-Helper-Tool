@@ -1624,16 +1624,28 @@ class FilterRow(tk.Frame):
             try:
                 safe = term.replace('"', '\\"').replace("'", "\\'")
                 if vt == "company_search":
-                    # Use wildcard on both sides so "balfour" matches "Balfour Beatty" etc.
-                    # Bullhorn Lucene: name:(*term*) does substring match on the indexed tokens
-                    q = f'name:(*{safe}*) AND NOT status:Archive'
+                    # Bullhorn tokenises names by word — "Met Structures" is two tokens.
+                    # name:(*met structures*) FAILS — wildcard doesn't span token boundaries.
+                    # Fix: split words and AND them: name:(*met*) AND name:(*structures*)
+                    words = [w for w in safe.strip().split() if w]
+                    if len(words) > 1:
+                        # Multi-word: each word must appear somewhere in the name
+                        word_clauses = " AND ".join(f'name:(*{w}*)' for w in words)
+                        q = f'({word_clauses}) AND NOT status:Archive'
+                    else:
+                        # Single word: wildcard both sides
+                        q = f'name:(*{safe}*) AND NOT status:Archive'
                     r = api._req("get", "search/ClientCorporation",
                                  params={"query": q, "fields": "id,name",
                                          "count": 50, "sort": "name"})
                     data = r.json().get("data", [])
-                    # If wildcard gave nothing, fall back to prefix (some BH configs don't allow leading *)
+                    # Fallback: prefix-only (some BH instances block leading wildcard)
                     if not data:
-                        q2 = f'name:({safe}*) AND NOT status:Archive'
+                        if len(words) > 1:
+                            word_clauses2 = " AND ".join(f'name:({w}*)' for w in words)
+                            q2 = f'({word_clauses2}) AND NOT status:Archive'
+                        else:
+                            q2 = f'name:({safe}*) AND NOT status:Archive'
                         r2 = api._req("get", "search/ClientCorporation",
                                       params={"query": q2, "fields": "id,name",
                                               "count": 50, "sort": "name"})
