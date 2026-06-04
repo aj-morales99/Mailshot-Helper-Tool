@@ -1,3 +1,8 @@
+## [v1.0.1] — 2026-06-04
+- Focus stays in search/filter entry after selecting a value — no need to click back
+- Stop on reply and open/link tracking now correctly disabled when creating Instantly campaigns
+- Added email sequence drafter in Push to Instantly popup — draft subject and body (plain text or HTML) before creating the campaign
+
 # Changelog
 
 ## [v1.0.0] — 2026-06-03

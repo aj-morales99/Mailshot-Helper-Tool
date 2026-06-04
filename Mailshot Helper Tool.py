@@ -1435,7 +1435,7 @@ FILTER_DEFS = [
     # (display_name, bh_field, value_type, options_list_or_None)
     ("Company",              "clientCorporation.name",             "company_search",      None),
     ("Work Email",           "email",                              "text",                None),
-    ("Company Email Domain", "clientCorporation.customTextBlock1", "text",                None),
+    ("Company Email Domain", "clientCorporation.customTextBlock1", "corp_domain_search",  None),
     ("Status",               "status",                             "inline_filter",       STATUS_OPTIONS),
     ("Email Status",         "customTextBlock1",                   "inline_filter",       EMAIL_STATUS_OPTIONS),
     ("Custom Industry",      "customTextBlock4",                   "inline_filter",       INDUSTRY_OPTIONS),
@@ -1456,7 +1456,7 @@ class FilterRow(tk.Frame):
     Value-type behaviours:
       text             – CTkEntry, Enter adds chip
       company_search   – debounced BH search → floating dropdown
-      corp_domain_search – (unused, domain field now uses text type)
+      corp_domain_search – BH domain search
       inline_filter    – click → filtered list
     """
     _api_ref = None
@@ -1512,7 +1512,7 @@ class FilterRow(tk.Frame):
         self._text_entry = ctk.CTkEntry(self.val_frame, textvariable=self.val_var,
                                          fg_color=ENTRY_BG, text_color=TEXT,
                                          border_color=BORDER, border_width=1,
-                                         corner_radius=8, placeholder_text="↵ enter to add  (e.g. severfield.com)",
+                                         corner_radius=8, placeholder_text="↵ enter to add",
                                          placeholder_text_color=SUBTEXT,
                                          font=ctk.CTkFont("SF Pro Text", 11), width=240, height=32)
         self._text_entry.bind("<Return>", self._add_text_chip)
@@ -1575,7 +1575,7 @@ class FilterRow(tk.Frame):
         for w in self.val_frame.winfo_children():
             w.pack_forget()
 
-        if new_vt == "company_search":
+        if new_vt in ("company_search", "corp_domain_search"):
             hint = ("Type to search companies…"
                     if new_vt == "company_search"
                     else "Type domain (e.g. severfield.com)…")
@@ -1640,22 +1640,26 @@ class FilterRow(tk.Frame):
                         data = r2.json().get("data", [])
                     names = sorted({c["name"] for c in data if c.get("name")})
                 else:
-                    # Domain search — wildcard on both sides of the domain fragment
-                    q = f'customTextBlock1:(*{safe}*) AND NOT status:Archive'
+                    # Domain search — search clientCorporation.customTextBlock1
+                    # Bullhorn stores as "@domain.com" so search with @ prefix
+                    safe_at = f"@{safe}" if not safe.startswith("@") else safe
+                    q = f'customTextBlock1:({safe_at}*) AND NOT status:Archive'
                     r = api._req("get", "search/ClientCorporation",
                                  params={"query": q,
                                          "fields": "id,name,customTextBlock1",
                                          "count": 50, "sort": "name"})
                     data = r.json().get("data", [])
                     if not data:
-                        q2 = f'customTextBlock1:({safe}*) AND NOT status:Archive'
+                        # Fallback: wildcard search without @ prefix
+                        q2 = f'customTextBlock1:(*{safe}*) AND NOT status:Archive'
                         r2 = api._req("get", "search/ClientCorporation",
                                       params={"query": q2,
                                               "fields": "id,name,customTextBlock1",
                                               "count": 50, "sort": "name"})
                         data = r2.json().get("data", [])
+                    # Show clean domain (strip leading @) so chips look clean
                     names = sorted({
-                        c.get("customTextBlock1", "").strip()
+                        c.get("customTextBlock1", "").strip().lstrip("@")
                         for c in data if c.get("customTextBlock1", "").strip()
                     })
 
@@ -1684,7 +1688,8 @@ class FilterRow(tk.Frame):
             sv.set("")
             hint.config(text="")
             self._close_dropdown()
-            entry.focus_set()
+            # Return focus to entry so user can keep typing without clicking
+            entry.after(10, lambda: entry.focus_set())
 
         self._open_floating_list(entry, items, _on_pick, width_ref=self._live_entry)
 
@@ -1731,12 +1736,13 @@ class FilterRow(tk.Frame):
                                   width_ref=self._if_entry)
 
     def _make_if_pick_handler(self):
-        """Returns a pick callback that adds the chip and immediately refreshes the dropdown."""
+        """Pick handler: adds chip, clears search, keeps focus + dropdown open."""
         def _on_pick(val):
             self._if_chip_frame.add(val)
             self._if_search_var.set("")
-            # Refresh dropdown in-place — don't close it
+            # Keep dropdown open and focus in entry so user can keep selecting
             self.after(10, self._show_if_dropdown)
+            self.after(20, lambda: self._if_entry.focus_set())
         return _on_pick
 
     # ── Shared floating list builder ──────────────────────────────────────
@@ -1870,7 +1876,7 @@ class FilterRow(tk.Frame):
     # ── Data accessors ────────────────────────────────────────────────────
     def get_values(self):
         vt = self._vtype()
-        if vt == "company_search":
+        if vt in ("company_search", "corp_domain_search"):
             return self._live_chip_frame.get()
         if vt == "inline_filter":
             return self._if_chip_frame.get()
@@ -1878,36 +1884,27 @@ class FilterRow(tk.Frame):
 
     def to_lucene(self):
         field, vt, _ = FIELD_MAP.get(self.field_var.get(),
-                                    (self.field_var.get(), "text", None))
+                                     (self.field_var.get(), "text", None))
         values = self.get_values()
         op     = self.op_var.get()
         if not values:
             return None
 
-        # Company Email Domain — detected by field name (type is "text" but needs @domain format)
-        # Builds: NOT clientCorporation.customTextBlock1:(@severfield.com)
-        # User types: "severfield.com" or "@severfield.com" — both accepted
-        if field == "clientCorporation.customTextBlock1":
+        # Company Email Domain — field is clientCorporation.customTextBlock1
+        # Bullhorn stores domains as "@domain.com" — match with wildcard
+        # Example from real query: NOT clientCorporation.customTextBlock1:(@severfield.com)
+        if vt == "corp_domain_search":
+            # Normalise: strip leading @ so user can type either "severfield.com" or "@severfield.com"
             clauses = []
             for v in values:
                 v = v.strip().lstrip("@")
+                # Match the exact domain stored as @domain.com
                 clauses.append(f'clientCorporation.customTextBlock1:(@{v})')
-            if len(clauses) == 1:
-                if op == "Exclude":     return f"NOT {clauses[0]}"
-                return clauses[0]
             if op == "Include Any": return "(" + " OR ".join(clauses) + ")"
             if op == "Exclude":     return "NOT (" + " OR ".join(clauses) + ")"
             return "(" + " OR ".join(clauses) + ")"
 
-        # Format the standard clauses as field:("value") in lowercase
-        clauses = [f'{field}:("{str(v).lower()}")' for v in values]
-        
-        # FIX: If there is only 1 clause, return it directly without outer ()
-        if len(clauses) == 1:
-            if op == "Exclude": return f"NOT {clauses[0]}"
-            return clauses[0]
-
-        # If there are multiple clauses, safely use parentheses and operators
+        clauses = [f'{field}:"{v}"' for v in values]
         if op == "Include Any": return "(" + " OR ".join(clauses) + ")"
         if op == "Include All": return "(" + " AND ".join(clauses) + ")"
         if op == "Exclude":     return "NOT (" + " OR ".join(clauses) + ")"
@@ -2026,7 +2023,8 @@ class InstantlyAPI:
 
     # ── Campaigns ────────────────────────────────────────────────────────
     def create_campaign(self, name, selected_senders, schedule_payload,
-                        daily_limit=50, text_only=True, first_text_only=True):
+                        daily_limit=50, text_only=True, first_text_only=True,
+                        sequence=None):
         """
         Creates a campaign matching the exact Instantly v2 OpenAPI spec.
         - email_list: list of email address strings (individual accounts)
@@ -2050,10 +2048,10 @@ class InstantlyAPI:
             "name":                    name,
             "campaign_schedule":       schedule_payload,
             "daily_limit":             daily_limit,
-            "stop_on_reply":           False,
-            "stop_on_auto_reply":      False,
-            "open_tracking":           False,
-            "link_tracking":           False,
+            "stop_on_reply":           False,   # disabled — do not stop on reply
+            "stop_on_auto_reply":      False,   # disabled
+            "open_tracking":           False,   # disabled — delivery optimisation
+            "link_tracking":           False,   # disabled
             "text_only":               text_only,
             "first_email_text_only":   first_text_only,
         }
@@ -2061,6 +2059,8 @@ class InstantlyAPI:
             body["email_list"]     = account_emails
         if tag_uuids:
             body["email_tag_list"] = tag_uuids
+        if sequence:
+            body["sequences"] = sequence   # Step 1 email sequence
 
         result = self._post("/campaigns", body)
 
@@ -2325,6 +2325,64 @@ class InstantlyCampaignPopup(tk.Toplevel):
                          text_color=TEXT, font=ctk.CTkFont("SF Pro Text", 10)
                          ).pack(anchor="w", pady=(0, 10))
 
+        # ── Sequence drafter ─────────────────────────────────────────────
+        section("Email sequence  (optional)")
+        ctk.CTkLabel(body,
+                     text="Draft your first email below. It will be added as Step 1 of the sequence.",
+                     text_color=SUBTEXT, font=ctk.CTkFont("SF Pro Text", 9),
+                     anchor="w", wraplength=480).pack(anchor="w", pady=(0, 6))
+
+        # Subject
+        subj_row = ctk.CTkFrame(body, fg_color=PANEL, corner_radius=0)
+        subj_row.pack(fill="x", pady=(0, 6))
+        ctk.CTkLabel(subj_row, text="Subject:", text_color=SUBTEXT,
+                     font=ctk.CTkFont("SF Pro Text", 10), width=60, anchor="w").pack(side="left")
+        self._seq_subject_var = tk.StringVar()
+        ctk.CTkEntry(subj_row, textvariable=self._seq_subject_var,
+                     fg_color=ENTRY_BG, text_color=TEXT,
+                     border_color=BORDER, border_width=1, corner_radius=8,
+                     placeholder_text="e.g. Quick question, {{firstName}}",
+                     placeholder_text_color=SUBTEXT,
+                     font=ctk.CTkFont("SF Pro Text", 10), height=32
+                     ).pack(side="left", fill="x", expand=True)
+
+        # Body — with HTML/Preview toggle
+        body_hdr = ctk.CTkFrame(body, fg_color=PANEL, corner_radius=0)
+        body_hdr.pack(fill="x", pady=(0, 4))
+        ctk.CTkLabel(body_hdr, text="Body:", text_color=SUBTEXT,
+                     font=ctk.CTkFont("SF Pro Text", 10)).pack(side="left")
+        self._html_mode = tk.BooleanVar(value=False)
+        ctk.CTkSwitch(body_hdr, text="HTML mode",
+                      variable=self._html_mode,
+                      command=self._toggle_seq_mode,
+                      onvalue=True, offvalue=False,
+                      fg_color=BORDER, progress_color=ACCENT,
+                      button_color=WHITE, button_hover_color=ACCENT_H,
+                      text_color=SUBTEXT, font=ctk.CTkFont("SF Pro Text", 9)
+                      ).pack(side="right")
+
+        # Text box for body
+        body_wrap = ctk.CTkFrame(body, fg_color=ENTRY_BG,
+                                  corner_radius=8, border_width=1, border_color=BORDER)
+        body_wrap.pack(fill="x", pady=(0, 4))
+        self._seq_body = tk.Text(body_wrap, height=7,
+                                  bg=ENTRY_BG, fg=TEXT,
+                                  insertbackground=TEXT,
+                                  font=("SF Pro Text", 10),
+                                  relief="flat", padx=10, pady=8,
+                                  wrap="word", highlightthickness=0)
+        self._seq_body.pack(fill="x")
+
+        # HTML preview label (hidden by default)
+        self._seq_preview_lbl = ctk.CTkLabel(body, text="",
+                                              text_color=SUBTEXT,
+                                              font=ctk.CTkFont("SF Pro Text", 8),
+                                              anchor="w", wraplength=480)
+
+        ctk.CTkLabel(body, text="Leave subject + body empty to skip sequence and add it manually in Instantly.",
+                     text_color=SUBTEXT, font=ctk.CTkFont("SF Pro Text", 8),
+                     anchor="w", wraplength=480).pack(anchor="w", pady=(0, 8))
+
         # ── Status label ──────────────────────────────────────────────────
         self._status_lbl = ctk.CTkLabel(body, text="",
                                          text_color=ACCENT, wraplength=460,
@@ -2391,6 +2449,35 @@ class InstantlyCampaignPopup(tk.Toplevel):
             self._acc_lbl.configure(text=preview, text_color=CHIP_FG)
         else:
             self._acc_lbl.configure(text="None selected", text_color=SUBTEXT)
+
+    def _toggle_seq_mode(self):
+        """Switch between plain text and HTML mode for sequence body."""
+        if self._html_mode.get():
+            self._seq_preview_lbl.configure(
+                text="HTML mode — paste your HTML. It will be sent as-is to Instantly.")
+            self._seq_preview_lbl.pack(anchor="w", pady=(0, 6))
+        else:
+            self._seq_preview_lbl.pack_forget()
+
+    def _build_sequence_payload(self):
+        """
+        Returns a sequences list for the campaign payload, or None to skip.
+        Empty subject + body = skip (user adds sequence manually in Instantly).
+        """
+        subject = self._seq_subject_var.get().strip()
+        body    = self._seq_body.get("1.0", "end").strip()
+        if not subject and not body:
+            return None
+        return [{
+            "steps": [{
+                "type":     "email",
+                "delay":    0,
+                "variants": [{
+                    "subject": subject or "(no subject)",
+                    "body":    body    or "",
+                }]
+            }]
+        }]
 
     def _build_schedule(self):
         # Days: Instantly v2 uses {"0": bool, "1": bool, ...} where 0=Sunday, 6=Saturday
@@ -2490,10 +2577,11 @@ class InstantlyCampaignPopup(tk.Toplevel):
         def _after_pulse():
             self._create_btn.configure(state="disabled")
             self._start_progress_dots("Step 1/2 — Creating campaign")
+            seq = self._build_sequence_payload()   # None if empty
             threading.Thread(target=self._run,
                              args=(name, schedule, leads, limit,
                                    list(self._sel_senders),
-                                   text_only, first_text_only),
+                                   text_only, first_text_only, seq),
                              daemon=True).start()
         self._pulse_btn(self._create_btn, done_cb=_after_pulse)
 
@@ -2531,13 +2619,14 @@ class InstantlyCampaignPopup(tk.Toplevel):
     def _stop_progress_dots(self):
         self._progress_running = False
 
-    def _run(self, name, schedule, leads, limit, senders, text_only, first_text_only):
+    def _run(self, name, schedule, leads, limit, senders, text_only, first_text_only, sequence=None):
         steps = []
         self.after(0, lambda: self._start_progress_dots("Step 1/2 — Creating campaign"))
         try:
             result = self._api.create_campaign(
                 name, senders, schedule, limit,
-                text_only=text_only, first_text_only=first_text_only)
+                text_only=text_only, first_text_only=first_text_only,
+                sequence=sequence)
             cid = result["id"]
             steps.append(f"✓ Campaign '{name}' created (id: {cid})")
         except Exception as e:
@@ -3414,4 +3503,3 @@ class App(ctk.CTk):
 if __name__ == "__main__":
     app = App()
     app.mainloop()
-# Build: 2026-06-03
