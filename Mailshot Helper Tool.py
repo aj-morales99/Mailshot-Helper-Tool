@@ -2079,7 +2079,27 @@ class InstantlyAPI:
         cid = result.get("id")
         if not cid:
             raise Exception(f"No campaign id in response: {result}")
+
+        # Instantly's workspace defaults can override values set during creation.
+        # PATCH the campaign immediately after to force-disable these settings.
+        try:
+            self._patch(f"/campaigns/{cid}", {
+                "stop_on_reply":      False,
+                "stop_on_auto_reply": False,
+                "open_tracking":      False,
+                "link_tracking":      False,
+            })
+        except Exception:
+            pass  # non-fatal — campaign is still created
+
         return {"id": cid, "raw": result}
+
+    def _patch(self, path, body):
+        r = requests.patch(f"{INSTANTLY_BASE}{path}", headers=self._headers(),
+                           json=body, timeout=20)
+        if not r.ok:
+            raise Exception(f"PATCH {path} → {r.status_code}: {r.text[:300]}")
+        return r.json()
 
     # ── Leads ────────────────────────────────────────────────────────────
     def add_leads(self, campaign_id, leads_batch):

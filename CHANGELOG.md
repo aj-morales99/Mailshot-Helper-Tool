@@ -3,6 +3,7 @@
 - Stop on reply and open/link tracking now correctly disabled when creating Instantly campaigns
 - Added email sequence drafter in Push to Instantly popup — draft subject and body (plain text or HTML) before creating the campaign
 - Fixed multi-word company search ("Met Structures", "Balfour Beatty" etc.) — now splits words and searches each token separately
+- Fixed stop on reply / open tracking / link tracking always enabling — now sends a PATCH request after campaign creation to force them disabled (Instantly workspace defaults were overriding the creation values)
 
 # Changelog
 
